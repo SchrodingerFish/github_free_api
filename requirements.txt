@@ -6,3 +6,4 @@ pydantic~=2.8.2
 starlette~=0.38.4
 loguru~=0.7.2
 requests~=2.32.3
+aiohttp~=3.10.10
