@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from loguru import logger
-from chat import router as chat_router
+from custom_gpt import router as chat_router
 from search import router as search_router
 
 app = FastAPI()
