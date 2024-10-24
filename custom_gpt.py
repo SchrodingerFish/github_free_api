@@ -5,51 +5,39 @@ import aiohttp
 import time
 import requests
 import functools
-from fastapi import FastAPI, HTTPException, APIRouter
+from fastapi import FastAPI, HTTPException, APIRouter, Request, Header
 from pydantic import BaseModel, Field
-from typing import List, Optional, Literal, AsyncGenerator
+from typing import List, Optional, Literal, AsyncGenerator, Callable, Any
 from loguru import logger
-from typing import Callable, Any
 from starlette.responses import StreamingResponse
 
-
-# 配置参数
-PROJECT_ID="xxx"
-API_KEY="xxx"
-CUSTOM_PERSONA='''
+CUSTOM_PERSONA = '''
 You are an all-knowing programmer.
-
 Role and Goal:
 - You are an expert in various programming languages, frameworks, and technologies.
 - Your goal is to assist users with any programming-related questions, providing accurate and efficient solutions.
 - You will provide clear, concise, and accurate code snippets and explanations across different programming domains.
-
 Constraints:
 - Ensure all code snippets are syntactically correct and follow best practices for the respective language or framework.
 - Avoid using jargon that might be confusing to beginners.
 - Do not provide information outside the scope of programming and technology.
-
 Guidelines:
 - Always ask for clarification if the user's request is ambiguous.
 - Provide examples where necessary to illustrate your points.
 - Offer tips and best practices for writing efficient and maintainable code.
 - Be prepared to switch between different programming languages and technologies as needed.
-
 Clarification:
 - Always ask for clarification if the user's request is ambiguous or lacks detail.
 - If the user does not provide enough information, make reasonable assumptions and proceed with the response.
-
 Personalization:
 - Tailor responses to the user's level of expertise, whether they are beginners or advanced users.
 - Be patient and supportive, especially with users who are new to programming.
-
 Special Instructions:
 - Reference specific libraries, frameworks, and tools when providing examples.
 - Include comments in code snippets to explain the purpose of each part of the code.
 - Be prepared to provide solutions for a wide range of programming problems, from simple syntax issues to complex algorithmic challenges.
 '''
 
-## 定义异步计时器
 def async_timer(func: Callable) -> Callable:
     @functools.wraps(func)
     async def wrapper(*args, **kwargs) -> Any:
@@ -60,7 +48,6 @@ def async_timer(func: Callable) -> Callable:
         return result
     return wrapper
 
-# OpenAI 格式的请求模型
 class Message(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str
@@ -78,7 +65,6 @@ class ChatCompletionRequest(BaseModel):
     frequency_penalty: Optional[float] = 0
     user: Optional[str] = None
 
-# OpenAI 格式的响应模型
 class ChatCompletionChoice(BaseModel):
     index: int
     message: Message
@@ -98,16 +84,11 @@ class ChatCompletionResponse(BaseModel):
     choices: List[ChatCompletionChoice]
     usage: Usage
 
-## 生成唯一标识符
 async def generate_system_fingerprint() -> str:
-    # 使用时间戳和UUID生成唯一标识符
     unique_id = f"{time.time()}{uuid.uuid4()}"
-    # 使用SHA-256生成哈希值
     fingerprint = hashlib.sha256(unique_id.encode()).hexdigest()
-    # 截取前16位作为system_fingerprint
     return fingerprint[:16]
 
-## 接收并处理消息
 async def format_response(messages: List[Message], assistant_response: str) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id=f"chatcmpl-{int(time.time()*1000)}",
@@ -131,21 +112,17 @@ async def format_response(messages: List[Message], assistant_response: str) -> C
         )
     )
 
-# ChatBot类
 class ChatBot:
-    def __init__(self, project_id: str, api_key: str, custom_persona: str):
-        self.project_id = project_id
-        self.api_key = api_key
+    def __init__(self, custom_persona: str):
         self.custom_persona = custom_persona
         self.conversation_history = []
         self.session_id = None
 
-    ## 获取所有会话
-    async def get_all_conversations(self):
-        url = f"https://app.customgpt.ai/api/v1/projects/{self.project_id}/conversations"
+    async def get_all_conversations(self, project_id, api_key):
+        url = f"https://app.customgpt.ai/api/v1/projects/{project_id}/conversations"
         headers = {
             "accept": "application/json",
-            "authorization": f"Bearer {self.api_key}"
+            "authorization": f"Bearer {api_key}"
         }
         try:
             response = requests.get(url, headers=headers)
@@ -154,14 +131,13 @@ class ChatBot:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get conversations: {str(e)}")
 
-    ## 创建会话
-    async def create_conversation(self, conversation_name: str = "Default"):
-        url = f"https://app.customgpt.ai/api/v1/projects/{self.project_id}/conversations"
+    async def create_conversation(self, project_id, api_key, conversation_name: str = "Default"):
+        url = f"https://app.customgpt.ai/api/v1/projects/{project_id}/conversations"
         payload = {"name": conversation_name}
         headers = {
             "accept": "application/json",
             "content-type": "application/json",
-            "authorization": f"Bearer {self.api_key}"
+            "authorization": f"Bearer {api_key}"
         }
         try:
             response = requests.post(url, json=payload, headers=headers)
@@ -170,12 +146,9 @@ class ChatBot:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to create conversation: {str(e)}")
 
-    ## 发送消息,非流式响应
-    async def send_message(self, messages: List[Message]) -> ChatCompletionResponse:
-        # 构建对话上下文
+    async def send_message(self, messages: List[Message], project_id, api_key) -> ChatCompletionResponse:
         context = "\n".join([f"{msg.role}: {msg.content}" for msg in messages])
-
-        url = f"https://app.customgpt.ai/api/v1/projects/{self.project_id}/conversations/{self.session_id}/messages"
+        url = f"https://app.customgpt.ai/api/v1/projects/{project_id}/conversations/{self.session_id}/messages"
         payload = {
             "response_source": "openai_content",
             "prompt": context,
@@ -185,7 +158,7 @@ class ChatBot:
         headers = {
             "accept": "application/json",
             "content-type": "application/json",
-            "authorization": f"Bearer {self.api_key}"
+            "authorization": f"Bearer {api_key}"
         }
 
         try:
@@ -196,13 +169,14 @@ class ChatBot:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to send message: {str(e)}")
 
-    ## 发送消息，流式响应
     async def stream_chat_completion(
             self,
-            messages: List[Message]
+            messages: List[Message],
+            project_id,
+            api_key
     ) -> AsyncGenerator[str, None]:
         prompt = messages[-1].content
-        url = f"https://app.customgpt.ai/api/v1/projects/{self.project_id}/conversations/{self.session_id}/messages?stream=true&lang=zh"
+        url = f"https://app.customgpt.ai/api/v1/projects/{project_id}/conversations/{self.session_id}/messages?stream=true&lang=zh"
         payload = {
             "response_source": "openai_content",
             "prompt": prompt,
@@ -212,7 +186,7 @@ class ChatBot:
         headers = {
             "accept": "application/json",
             "content-type": "application/json",
-            "authorization": f"Bearer {self.api_key}"
+            "authorization": f"Bearer {api_key}"
         }
         try:
             timeout = aiohttp.ClientTimeout(total=300)
@@ -228,7 +202,6 @@ class ChatBot:
                             status_code=response.status,
                             detail=f"CustomGPT API error: {error_text}"
                         )
-                    # 发送开始标记
                     start_response = {
                         "id": f"chatcmpl-{int(time.time() * 1000)}",
                         "object": "chat.completion.chunk",
@@ -243,7 +216,6 @@ class ChatBot:
                     }
                     yield f"data: {json.dumps(start_response)}\n\n"
 
-                    # 使用 aiohttp 的内置流式处理
                     buffer = ""
                     current_event = ""
 
@@ -300,38 +272,55 @@ class ChatBot:
             raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 
-# 创建全局ChatBot实例
-chatbot = ChatBot(PROJECT_ID, API_KEY, CUSTOM_PERSONA)
-
+chatbot = ChatBot(CUSTOM_PERSONA)
 router = APIRouter()
 
 @router.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 @async_timer
-async def create_chat_completion(request: ChatCompletionRequest):
+async def create_chat_completion(request: ChatCompletionRequest, authorization: str = Header(None)):
     try:
-        # 获取所有会话，并查找默认会话
-        conversations = await chatbot.get_all_conversations()
-        logger.info(f"Received request: {conversations}")
+        # Verify authorization header
+        if not authorization:
+            raise HTTPException(
+                status_code=401,
+                detail="Authorization header is required"
+            )
+
+        # Extract the API key - assuming Bearer token format
+        if not authorization.startswith('Bearer '):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid authorization format. Must be 'Bearer <token>'"
+            )
+
+        project_id=authorization.replace('Bearer ', '').split("#")[0].strip()
+        if not project_id or project_id=="":
+            raise HTTPException(
+                status_code=401,
+                detail="Authorization can't find project_id header,however project_id is required"
+            )
+
+        api_key = authorization.split("#")[1].strip()
+        if not project_id or not api_key:
+            raise HTTPException(status_code=400, detail="Project ID or API Key is missing")
+
+        conversations = await chatbot.get_all_conversations(project_id, api_key)
         for conv in conversations:
             if conv['name'] == 'Default':
                 chatbot.session_id = conv['session_id']
-                logger.info(f"Found existing conversation with session_id: {chatbot.session_id}")
                 break
-        # 默认会话不存在，创建新会话
+
         if not chatbot.session_id:
-           chatbot.session_id = await chatbot.create_conversation()
-           logger.info(f"Created new conversation with session_id: {chatbot.session_id}")
-        #流式响应
+            chatbot.session_id = await chatbot.create_conversation(project_id, api_key)
+
         if request.stream:
             return StreamingResponse(
-                chatbot.stream_chat_completion(request.messages),
+                chatbot.stream_chat_completion(request.messages, project_id, api_key),
                 media_type="text/event-stream"
             )
-        # 非流式响应
         else:
-            response = await chatbot.send_message(request.messages)
-            logger.info(f"Returned response: {response}")
+            response = await chatbot.send_message(request.messages, project_id, api_key)
             return response
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
