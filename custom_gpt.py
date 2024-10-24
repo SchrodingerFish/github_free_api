@@ -5,7 +5,7 @@ import aiohttp
 import time
 import requests
 import functools
-from fastapi import FastAPI, HTTPException, APIRouter, Request, Header
+from fastapi import HTTPException, APIRouter, Header
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal, AsyncGenerator, Callable, Any
 from loguru import logger
@@ -112,41 +112,44 @@ async def format_response(messages: List[Message], assistant_response: str) -> C
         )
     )
 
+
+async def get_all_conversations(project_id, api_key):
+    url = f"https://app.customgpt.ai/api/v1/projects/{project_id}/conversations"
+    headers = {
+        "accept": "application/json",
+        "authorization": f"Bearer {api_key}"
+    }
+    try:
+        response = requests.get(url, headers=headers)
+        conversations = response.json()['data']['data']
+        return conversations
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get conversations: {str(e)}")
+
+
+async def create_conversation(project_id, api_key, conversation_name: str = "Default"):
+    url = f"https://app.customgpt.ai/api/v1/projects/{project_id}/conversations"
+    payload = {"name": conversation_name}
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "authorization": f"Bearer {api_key}"
+    }
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        session_id = response.json()['data']['session_id']
+        return session_id
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create conversation: {str(e)}")
+
+
 class ChatBot:
     def __init__(self, custom_persona: str):
         self.custom_persona = custom_persona
         self.conversation_history = []
         self.session_id = None
 
-    async def get_all_conversations(self, project_id, api_key):
-        url = f"https://app.customgpt.ai/api/v1/projects/{project_id}/conversations"
-        headers = {
-            "accept": "application/json",
-            "authorization": f"Bearer {api_key}"
-        }
-        try:
-            response = requests.get(url, headers=headers)
-            conversations = response.json()['data']['data']
-            return conversations
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to get conversations: {str(e)}")
-
-    async def create_conversation(self, project_id, api_key, conversation_name: str = "Default"):
-        url = f"https://app.customgpt.ai/api/v1/projects/{project_id}/conversations"
-        payload = {"name": conversation_name}
-        headers = {
-            "accept": "application/json",
-            "content-type": "application/json",
-            "authorization": f"Bearer {api_key}"
-        }
-        try:
-            response = requests.post(url, json=payload, headers=headers)
-            session_id = response.json()['data']['session_id']
-            return session_id
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to create conversation: {str(e)}")
-
-    async def send_message(self, messages: List[Message], project_id, api_key) -> ChatCompletionResponse:
+    async def none_stream_chat_completion(self, messages: List[Message], project_id, api_key) -> ChatCompletionResponse:
         context = "\n".join([f"{msg.role}: {msg.content}" for msg in messages])
         url = f"https://app.customgpt.ai/api/v1/projects/{project_id}/conversations/{self.session_id}/messages"
         payload = {
@@ -304,14 +307,14 @@ async def create_chat_completion(request: ChatCompletionRequest, authorization: 
         if not project_id or not api_key:
             raise HTTPException(status_code=400, detail="Project ID or API Key is missing")
 
-        conversations = await chatbot.get_all_conversations(project_id, api_key)
+        conversations = await get_all_conversations(project_id, api_key)
         for conv in conversations:
             if conv['name'] == 'Default':
                 chatbot.session_id = conv['session_id']
                 break
 
         if not chatbot.session_id:
-            chatbot.session_id = await chatbot.create_conversation(project_id, api_key)
+            chatbot.session_id = await create_conversation(project_id, api_key)
 
         if request.stream:
             return StreamingResponse(
@@ -319,7 +322,7 @@ async def create_chat_completion(request: ChatCompletionRequest, authorization: 
                 media_type="text/event-stream"
             )
         else:
-            response = await chatbot.send_message(request.messages, project_id, api_key)
+            response = await chatbot.none_stream_chat_completion(request.messages, project_id, api_key)
             return response
 
     except Exception as e:
