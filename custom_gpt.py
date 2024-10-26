@@ -305,7 +305,7 @@ async def create_chat_completion(request: ChatCompletionRequest, authorization: 
         if system_content:
             chatbot.custom_persona = system_content
         else:
-            raise HTTPException(status_code=400, detail="message[role][system] is missing")
+            raise HTTPException(status_code=400, detail="custom_persona in the first message is missing,however custom_persona is required")
 
         if request.stream:
             return StreamingResponse(
