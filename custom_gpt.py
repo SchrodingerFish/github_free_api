@@ -11,32 +11,7 @@ from typing import List, Optional, Literal, AsyncGenerator, Callable, Any
 from loguru import logger
 from starlette.responses import StreamingResponse
 
-CUSTOM_PERSONA = '''
-You are an all-knowing programmer.
-Role and Goal:
-- You are an expert in various programming languages, frameworks, and technologies.
-- Your goal is to assist users with any programming-related questions, providing accurate and efficient solutions.
-- You will provide clear, concise, and accurate code snippets and explanations across different programming domains.
-Constraints:
-- Ensure all code snippets are syntactically correct and follow best practices for the respective language or framework.
-- Avoid using jargon that might be confusing to beginners.
-- Do not provide information outside the scope of programming and technology.
-Guidelines:
-- Always ask for clarification if the user's request is ambiguous.
-- Provide examples where necessary to illustrate your points.
-- Offer tips and best practices for writing efficient and maintainable code.
-- Be prepared to switch between different programming languages and technologies as needed.
-Clarification:
-- Always ask for clarification if the user's request is ambiguous or lacks detail.
-- If the user does not provide enough information, make reasonable assumptions and proceed with the response.
-Personalization:
-- Tailor responses to the user's level of expertise, whether they are beginners or advanced users.
-- Be patient and supportive, especially with users who are new to programming.
-Special Instructions:
-- Reference specific libraries, frameworks, and tools when providing examples.
-- Include comments in code snippets to explain the purpose of each part of the code.
-- Be prepared to provide solutions for a wide range of programming problems, from simple syntax issues to complex algorithmic challenges.
-'''
+CUSTOM_PERSONA = "You are a helpful assistant."
 
 def async_timer(func: Callable) -> Callable:
     @functools.wraps(func)
@@ -48,9 +23,11 @@ def async_timer(func: Callable) -> Callable:
         return result
     return wrapper
 
+
 class Message(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str
+
 
 class ChatCompletionRequest(BaseModel):
     model: str = Field(default="gpt-4-o")
@@ -65,15 +42,18 @@ class ChatCompletionRequest(BaseModel):
     frequency_penalty: Optional[float] = 0
     user: Optional[str] = None
 
+
 class ChatCompletionChoice(BaseModel):
     index: int
     message: Message
     finish_reason: str
 
+
 class Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+
 
 class ChatCompletionResponse(BaseModel):
     id: str
@@ -84,14 +64,16 @@ class ChatCompletionResponse(BaseModel):
     choices: List[ChatCompletionChoice]
     usage: Usage
 
+
 async def generate_system_fingerprint() -> str:
     unique_id = f"{time.time()}{uuid.uuid4()}"
     fingerprint = hashlib.sha256(unique_id.encode()).hexdigest()
     return fingerprint[:16]
 
+
 async def format_response(messages: List[Message], assistant_response: str) -> ChatCompletionResponse:
     return ChatCompletionResponse(
-        id=f"chatcmpl-{int(time.time()*1000)}",
+        id=f"chatcmpl-{int(time.time() * 1000)}",
         created=int(time.time()),
         model="gpt-4-o",
         system_fingerprint=f"fp_{await generate_system_fingerprint()}",
@@ -99,7 +81,7 @@ async def format_response(messages: List[Message], assistant_response: str) -> C
             ChatCompletionChoice(
                 index=0,
                 message=Message(
-                    role="assistant",
+                    role="user",
                     content=assistant_response
                 ),
                 finish_reason="stop"
@@ -278,6 +260,7 @@ class ChatBot:
 chatbot = ChatBot(CUSTOM_PERSONA)
 router = APIRouter()
 
+
 @router.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 @async_timer
 async def create_chat_completion(request: ChatCompletionRequest, authorization: str = Header(None)):
@@ -296,8 +279,8 @@ async def create_chat_completion(request: ChatCompletionRequest, authorization: 
                 detail="Invalid authorization format. Must be 'Bearer <token>'"
             )
 
-        project_id=authorization.replace('Bearer ', '').split("#")[0].strip()
-        if not project_id or project_id=="":
+        project_id = authorization.replace('Bearer ', '').split("#")[0].strip()
+        if not project_id or project_id == "":
             raise HTTPException(
                 status_code=401,
                 detail="Authorization can't find project_id header,however project_id is required"
@@ -315,6 +298,14 @@ async def create_chat_completion(request: ChatCompletionRequest, authorization: 
 
         if not chatbot.session_id:
             chatbot.session_id = await create_conversation(project_id, api_key)
+
+        # system_content = next((message["content"] for message in request.messages if message["role"] == "system"), None)
+        system_content = next((message.content for message in request.messages if message.role == "system"), None)
+
+        if system_content:
+            chatbot.custom_persona = system_content
+        else:
+            raise HTTPException(status_code=400, detail="message[role][system] is missing")
 
         if request.stream:
             return StreamingResponse(
