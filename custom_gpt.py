@@ -263,7 +263,7 @@ router = APIRouter()
 
 @router.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 @async_timer
-async def create_chat_completion(request: ChatCompletionRequest, authorization: str = Header(None)):
+async def chat(request: ChatCompletionRequest, authorization: str = Header(None)):
     try:
         # Verify authorization header
         if not authorization:
@@ -304,8 +304,6 @@ async def create_chat_completion(request: ChatCompletionRequest, authorization: 
 
         if system_content:
             chatbot.custom_persona = system_content
-        else:
-            raise HTTPException(status_code=400, detail="custom_persona in the first message is missing,however custom_persona is required")
 
         if request.stream:
             return StreamingResponse(
