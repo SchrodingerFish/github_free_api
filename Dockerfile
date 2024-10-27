@@ -19,9 +19,6 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 # 复制应用代码
 COPY . .
 
-# 设置环境变量
-ENV GITHUB_TOKEN=''
-
 # 暴露端口
 EXPOSE 8080
 
