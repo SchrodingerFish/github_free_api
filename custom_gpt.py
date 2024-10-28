@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import uuid
 import aiohttp
 import time
@@ -173,20 +174,17 @@ class ChatBot:
             "content-type": "application/json",
             "authorization": f"Bearer {api_key}"
         }
+
         try:
-            timeout = aiohttp.ClientTimeout(total=300)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                        url,
-                        json=payload,
-                        headers=headers
-                ) as response:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as session:
+                async with session.post(url, json=payload, headers=headers) as response:
                     if response.status != 200:
                         error_text = await response.text()
                         raise HTTPException(
                             status_code=response.status,
                             detail=f"CustomGPT API error: {error_text}"
                         )
+
                     start_response = {
                         "id": f"chatcmpl-{int(time.time() * 1000)}",
                         "object": "chat.completion.chunk",
@@ -200,9 +198,6 @@ class ChatBot:
                         }]
                     }
                     yield f"data: {json.dumps(start_response)}\n\n"
-
-                    buffer = ""
-                    current_event = ""
 
                     async for line_bytes in response.content:
                         line = line_bytes.decode('utf-8')
@@ -273,22 +268,22 @@ async def chat(request: ChatCompletionRequest, authorization: str = Header(None)
             )
 
         # Extract the API key - assuming Bearer token format
-        if not authorization.startswith('Bearer '):
+        match = re.match(r'Bearer\s+(\S+)', authorization)
+        if not match:
             raise HTTPException(
                 status_code=401,
                 detail="Invalid authorization format. Must be 'Bearer <token>'"
             )
 
-        project_id = authorization.replace('Bearer ', '').split("#")[0].strip()
-        if not project_id or project_id == "":
+        api_key = match.group(1).split("#")[1].strip()
+
+        # Extract project ID using a more flexible method
+        project_id = match.group(1).split("#")[0].strip()
+        if not project_id:
             raise HTTPException(
                 status_code=401,
-                detail="Authorization can't find project_id header,however project_id is required"
+                detail="Project ID is missing in the authorization header"
             )
-
-        api_key = authorization.split("#")[1].strip()
-        if not project_id or not api_key:
-            raise HTTPException(status_code=400, detail="Project ID or API Key is missing")
 
         conversations = await get_all_conversations(project_id, api_key)
         for conv in conversations:
@@ -299,7 +294,6 @@ async def chat(request: ChatCompletionRequest, authorization: str = Header(None)
         if not chatbot.session_id:
             chatbot.session_id = await create_conversation(project_id, api_key)
 
-        # system_content = next((message["content"] for message in request.messages if message["role"] == "system"), None)
         system_content = next((message.content for message in request.messages if message.role == "system"), None)
 
         if system_content:
